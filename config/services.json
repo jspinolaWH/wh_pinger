@@ -1,0 +1,94 @@
+{
+  "services": [
+    {
+      "name": "PROD",
+      "url": "https://platform-api.wastehero.io/graph-api/",
+      "tier": "critical",
+      "heartbeatInterval": 2,
+      "showChart": true,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    },
+    {
+      "name": "PREVIEW DEMO",
+      "url": "https://preview-demo-platform.wastehero.io/graph-api/",
+      "tier": "standard",
+      "heartbeatInterval": 5,
+      "showChart": true,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    },
+    {
+      "name": "DEV",
+      "url": "https://dev-platform-api.wastehero.io/graph-api/",
+      "tier": "standard",
+      "heartbeatInterval": 5,
+      "showChart": true,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    },
+    {
+      "name": "WasteHero 2.0",
+      "url": "https://staging-pjh.wastehero.io/graph-api/",
+      "tier": "standard",
+      "heartbeatInterval": 5,
+      "showChart": true,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    },
+    {
+      "name": "PREVIEW 2",
+      "url": "https://preview-2-platform.wastehero.io/graph-api/",
+      "tier": "low",
+      "heartbeatInterval": 5,
+      "showChart": false,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    },
+    {
+      "name": "PREVIEW 6",
+      "url": "https://preview-6-platform.wastehero.io/graph-api/",
+      "tier": "low",
+      "heartbeatInterval": 5,
+      "showChart": false,
+      "checks": [
+        {
+          "name": "introspection",
+          "query": "{ __typename }",
+          "strategy": "basic",
+          "timeout": 10000
+        }
+      ]
+    }
+  ]
+}

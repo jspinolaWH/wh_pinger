@@ -1,0 +1,28 @@
+{
+  "server": {
+    "port": 3000,
+    "websocketPort": 3001,
+    "host": "0.0.0.0"
+  },
+  "monitoring": {
+    "historyRetention": 24,
+    "logRotationInterval": "daily",
+    "maxLogSize": 104857600,
+    "requestTimeout": 10000
+  },
+  "alerts": {
+    "audio": true,
+    "volume": 0.7,
+    "repeatUrgent": true,
+    "sounds": {
+      "flatline": "client/public/sounds/flatline.mp3",
+      "warning": "client/public/sounds/warning.mp3",
+      "recovery": "client/public/sounds/recovery.mp3"
+    }
+  },
+  "display": {
+    "fullscreen": true,
+    "refreshInterval": 1000,
+    "theme": "dark"
+  }
+}
