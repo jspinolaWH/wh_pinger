@@ -42,11 +42,9 @@ function App() {
     };
 
     websocket.onclose = () => {
-      console.log('⚠️  WebSocket disconnected, reconnecting in 5s...');
-      setTimeout(() => {
-        // Reconnect logic would go here
-        window.location.reload();
-      }, 5000);
+      console.log('⚠️  WebSocket disconnected, attempting to reconnect...');
+      // Reconnection will happen automatically on next render
+      // Don't reload the page to avoid losing state
     };
 
     setWs(websocket);
@@ -131,6 +129,7 @@ function App() {
           lastCheck: new Date(data.timestamp),
           history: [...service.history.slice(-19), newHistory], // Keep last 20
           httpStatus: data.httpStatus,
+          uptime24h: data.uptime !== undefined ? data.uptime : service.uptime24h,
         };
       }
       return service;
@@ -223,7 +222,7 @@ function App() {
   };
 
   // Helper functions
-  const mapBackendStatus = (status: string): 'healthy' | 'warning' | 'degraded' | 'critical' | 'flatline' => {
+  const mapBackendStatus = (status: string): 'healthy' | 'warning' | 'degraded' | 'critical' | 'flatline' | 'unavailable' => {
     if (!status || status === 'unknown') return 'healthy';
     return status as any;
   };
@@ -235,7 +234,7 @@ function App() {
   };
 
   const isStatusDegraded = (oldStatus: string, newStatus: string): boolean => {
-    const hierarchy = { healthy: 0, warning: 1, degraded: 2, critical: 3, flatline: 4 };
+    const hierarchy = { healthy: 0, warning: 1, degraded: 2, critical: 3, unavailable: 3, flatline: 4 };
     return (hierarchy[newStatus as keyof typeof hierarchy] || 0) > (hierarchy[oldStatus as keyof typeof hierarchy] || 0);
   };
 

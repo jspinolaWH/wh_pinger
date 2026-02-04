@@ -1,7 +1,7 @@
 export interface CheckHistory {
   timestamp: Date;
   responseTime: number;
-  status: 'healthy' | 'warning' | 'degraded' | 'critical' | 'flatline';
+  status: 'healthy' | 'warning' | 'critical';
 }
 
 export interface ServiceData {
@@ -9,7 +9,7 @@ export interface ServiceData {
   name: string;
   environment: 'production' | 'development' | 'preview';
   responseTime: number;
-  status: 'healthy' | 'warning' | 'degraded' | 'critical' | 'flatline';
+  status: 'healthy' | 'warning' | 'critical';
   uptime24h: number;
   uptime7d: number;
   lastCheck: Date;

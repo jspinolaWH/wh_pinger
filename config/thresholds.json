@@ -1,47 +1,37 @@
 {
   "default": {
     "healthy": {
-      "max": 200,
+      "max": 750,
       "color": "#00ff00",
       "label": "Healthy"
     },
     "warning": {
-      "min": 200,
-      "max": 500,
-      "color": "#ffff00",
+      "min": 750,
+      "max": 1500,
+      "sustainedCount": 3,
+      "color": "#ffaa00",
       "label": "Warning"
     },
-    "degraded": {
-      "min": 500,
-      "max": 1000,
-      "color": "#ff8800",
-      "label": "Degraded"
-    },
     "critical": {
-      "min": 1000,
+      "min": 1500,
       "color": "#ff0000",
-      "label": "Critical"
-    },
-    "flatline": {
-      "consecutiveFailures": 3,
-      "color": "#8b0000",
-      "label": "Flatline",
-      "alert": true
+      "label": "Critical",
+      "consecutiveFailures": 3
     }
   },
   "tiers": {
     "critical": {
-      "flatline": {
+      "critical": {
         "consecutiveFailures": 2
       }
     },
     "standard": {
-      "flatline": {
+      "critical": {
         "consecutiveFailures": 3
       }
     },
     "low": {
-      "flatline": {
+      "critical": {
         "consecutiveFailures": 5
       }
     }

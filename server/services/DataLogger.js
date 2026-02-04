@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs';
+import fsSync from 'fs';
 import path from 'path';
 
 /**
@@ -13,21 +14,34 @@ export class DataLogger {
     this.historyRetention = config.monitoring?.historyRetention || 24; // hours
     this.logCache = new Map(); // In-memory cache for current day's logs
 
+    // Ensure log directory exists SYNCHRONOUSLY before any events can fire
+    this.ensureLogDirectorySync();
+
     // Subscribe to events
     eventBus.on('heartbeat_received', this.logHeartbeat.bind(this));
     eventBus.on('heartbeat_failed', this.logHeartbeat.bind(this));
-    eventBus.on('flatline_detected', this.logFlatline.bind(this));
-    eventBus.on('service_recovered', this.logRecovery.bind(this));
-
-    // Ensure log directory exists
-    this.ensureLogDirectory();
 
     // Schedule daily log rotation
     this.scheduleLogRotation();
   }
 
   /**
-   * Ensure log directory exists
+   * Ensure log directory exists synchronously (called during constructor)
+   */
+  ensureLogDirectorySync() {
+    try {
+      if (!fsSync.existsSync(this.logPath)) {
+        fsSync.mkdirSync(this.logPath, { recursive: true });
+        console.log(`   ✓ Created log directory: ${this.logPath}`);
+      }
+    } catch (error) {
+      console.error('Error creating log directory:', error);
+      throw error; // Fail fast if we can't create log directory
+    }
+  }
+
+  /**
+   * Ensure log directory exists (async version for runtime use)
    */
   async ensureLogDirectory() {
     try {
@@ -56,38 +70,7 @@ export class DataLogger {
     await this.appendToLog(event.service, logEntry);
   }
 
-  /**
-   * Log flatline event
-   * @param {Object} event - Flatline event
-   */
-  async logFlatline(event) {
-    const logEntry = {
-      timestamp: event.timestamp,
-      service: event.service,
-      type: 'flatline',
-      consecutiveFailures: event.consecutiveFailures,
-      severity: event.severity,
-      lastSuccess: event.lastSuccess
-    };
 
-    await this.appendToLog(event.service, logEntry, 'events');
-  }
-
-  /**
-   * Log recovery event
-   * @param {Object} event - Recovery event
-   */
-  async logRecovery(event) {
-    const logEntry = {
-      timestamp: event.timestamp,
-      service: event.service,
-      type: 'recovery',
-      downtime: event.downtime,
-      failureCount: event.failureCount
-    };
-
-    await this.appendToLog(event.service, logEntry, 'events');
-  }
 
   /**
    * Append entry to log file

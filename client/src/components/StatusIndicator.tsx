@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 
 interface StatusIndicatorProps {
-  status: 'healthy' | 'warning' | 'degraded' | 'critical' | 'flatline';
+  status: 'healthy' | 'warning' | 'critical';
   size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
@@ -20,29 +20,19 @@ export function StatusIndicator({ status, size = 'md' }: StatusIndicatorProps) {
       pulseScale: [1, 1.1, 1],
     },
     warning: {
-      color: '#ffff00',
-      glowColor: 'rgba(255, 255, 0, 0.3)',
-      pulseScale: [1, 1.1, 1],
-    },
-    degraded: {
-      color: '#ff8800',
-      glowColor: 'rgba(255, 136, 0, 0.3)',
-      pulseScale: [1, 1.1, 1],
+      color: '#ffaa00',
+      glowColor: 'rgba(255, 170, 0, 0.3)',
+      pulseScale: [1, 1.12, 1],
     },
     critical: {
       color: '#ff0000',
       glowColor: 'rgba(255, 0, 0, 0.3)',
       pulseScale: [1, 1.15, 1],
     },
-    flatline: {
-      color: '#8b0000',
-      glowColor: 'rgba(139, 0, 0, 0.4)',
-      pulseScale: [1, 1.2, 1],
-    },
   };
 
   const config = statusConfig[status];
-  const shouldBlink = status === 'flatline';
+  const shouldBlink = status === 'critical';
 
   return (
     <div className="relative">

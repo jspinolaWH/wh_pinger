@@ -3,6 +3,7 @@
     {
       "name": "PROD",
       "url": "https://platform-api.wastehero.io/graph-api/",
+      "accessUrl": "https://platform-api.wastehero.io:443/graph-api/",
       "tier": "critical",
       "heartbeatInterval": 2,
       "showChart": true,
@@ -18,6 +19,7 @@
     {
       "name": "PREVIEW DEMO",
       "url": "https://preview-demo-platform.wastehero.io/graph-api/",
+      "accessUrl": "https://preview-demo-platform.wastehero.io:443/graph-api/",
       "tier": "standard",
       "heartbeatInterval": 5,
       "showChart": true,
@@ -33,6 +35,7 @@
     {
       "name": "DEV",
       "url": "https://dev-platform-api.wastehero.io/graph-api/",
+      "accessUrl": "https://dev-platform-api.wastehero.io:443/graph-api/",
       "tier": "standard",
       "heartbeatInterval": 5,
       "showChart": true,
@@ -48,6 +51,7 @@
     {
       "name": "WasteHero 2.0",
       "url": "https://staging-pjh.wastehero.io/graph-api/",
+      "accessUrl": "https://staging-pjh.wastehero.io:443/graph-api/",
       "tier": "standard",
       "heartbeatInterval": 5,
       "showChart": true,
@@ -63,6 +67,7 @@
     {
       "name": "PREVIEW 2",
       "url": "https://preview-2-platform.wastehero.io/graph-api/",
+      "accessUrl": "https://preview-2-platform.wastehero.io:443/graph-api/",
       "tier": "low",
       "heartbeatInterval": 5,
       "showChart": false,
@@ -78,6 +83,7 @@
     {
       "name": "PREVIEW 6",
       "url": "https://preview-6-platform.wastehero.io/graph-api/",
+      "accessUrl": "https://preview-6-platform.wastehero.io:443/graph-api/",
       "tier": "low",
       "heartbeatInterval": 5,
       "showChart": false,

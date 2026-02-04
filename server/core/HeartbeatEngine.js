@@ -52,18 +52,18 @@ export class HeartbeatEngine {
       };
 
       // Emit appropriate event
-      if (response.success) {
+      // Only count HTTP 200 responses as success for uptime calculation
+      if (response.success && response.status === 200) {
+        console.log(`[UPTIME] ${service.name}: SUCCESS - HTTP ${response.status}`);
         this.eventBus.emit('heartbeat_received', result);
+      } else if (response.hasResponse) {
+        // Got a response but not 200 (e.g., 503, 404) - treat as failure but not flatline
+        console.log(`[UPTIME] ${service.name}: FAILURE - HTTP ${response.status} (hasResponse: true)`);
+        this.eventBus.emit('heartbeat_failed', result);
       } else {
-        // Only treat as failure for flatline detection if it's a true network error
-        // HTTP errors (503, etc.) should not trigger flatline
-        if (response.hasResponse) {
-          // Got a response but it wasn't successful - treat as degraded heartbeat
-          this.eventBus.emit('heartbeat_received', result);
-        } else {
-          // No response (timeout/network error) - treat as failure
-          this.eventBus.emit('heartbeat_failed', result);
-        }
+        // No response (timeout/network error) - treat as failure
+        console.log(`[UPTIME] ${service.name}: FAILURE - No response (timeout/network error)`);
+        this.eventBus.emit('heartbeat_failed', result);
       }
 
       return result;
@@ -95,26 +95,17 @@ export class HeartbeatEngine {
   evaluatePulse(responseTime, response) {
     const thresholds = this.thresholds.default;
 
-    // If request failed but we got a response (HTTP error like 503), 
-    // evaluate based on response time, not flatline
+    // If request failed, return critical (failures are handled by StateManager)
     if (!response.success) {
-      // True flatline: timeout or network error (no response received)
-      if (!response.hasResponse) {
-        return {
-          status: 'flatline',
-          responseTime: responseTime
-        };
-      }
-      
-      // HTTP error (got response, but not successful)
-      // Treat as critical since the service is returning errors
       return {
         status: 'critical',
-        responseTime: responseTime
+        responseTime: responseTime,
+        isFailure: true
       };
     }
 
     // Evaluate successful responses based on response time thresholds
+    // Note: StateManager will handle sustained warning logic
     if (responseTime <= thresholds.healthy.max) {
       return {
         status: 'healthy',
@@ -123,11 +114,6 @@ export class HeartbeatEngine {
     } else if (responseTime <= thresholds.warning.max) {
       return {
         status: 'warning',
-        responseTime
-      };
-    } else if (responseTime <= thresholds.degraded.max) {
-      return {
-        status: 'degraded',
         responseTime
       };
     } else {

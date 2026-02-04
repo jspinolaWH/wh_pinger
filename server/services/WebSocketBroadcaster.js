@@ -3,17 +3,16 @@
  * Manages WebSocket connections and real-time updates
  */
 export class WebSocketBroadcaster {
-  constructor(eventBus, wsServer) {
+  constructor(eventBus, wsServer, stateManager) {
     this.eventBus = eventBus;
     this.wsServer = wsServer;
+    this.stateManager = stateManager;
     this.clients = new Set();
 
     // Subscribe to all events that should update UI
     eventBus.on('heartbeat_received', this.broadcastHeartbeat.bind(this));
     eventBus.on('heartbeat_failed', this.broadcastHeartbeat.bind(this));
-    eventBus.on('flatline_detected', this.broadcastFlatline.bind(this));
     eventBus.on('pulse_changed', this.broadcastPulseChange.bind(this));
-    eventBus.on('service_recovered', this.broadcastRecovery.bind(this));
     eventBus.on('alert_triggered', this.broadcastAlert.bind(this));
 
     // Set up WebSocket server event handlers
@@ -83,23 +82,16 @@ export class WebSocketBroadcaster {
    * @param {Object} event - Heartbeat event
    */
   broadcastHeartbeat(event) {
+    // Add uptime to the event data
+    const uptime = this.stateManager ? this.stateManager.getUptime(event.service) : null;
+    
     this.broadcast({
       type: 'heartbeat_update',
       timestamp: new Date().toISOString(),
-      data: event
-    });
-  }
-
-  /**
-   * Broadcast flatline alert
-   * @param {Object} event - Flatline event
-   */
-  broadcastFlatline(event) {
-    this.broadcast({
-      type: 'flatline',
-      timestamp: new Date().toISOString(),
-      urgent: true,
-      data: event
+      data: {
+        ...event,
+        uptime
+      }
     });
   }
 
@@ -110,18 +102,6 @@ export class WebSocketBroadcaster {
   broadcastPulseChange(event) {
     this.broadcast({
       type: 'pulse_changed',
-      timestamp: new Date().toISOString(),
-      data: event
-    });
-  }
-
-  /**
-   * Broadcast service recovery
-   * @param {Object} event - Recovery event
-   */
-  broadcastRecovery(event) {
-    this.broadcast({
-      type: 'service_recovered',
       timestamp: new Date().toISOString(),
       data: event
     });

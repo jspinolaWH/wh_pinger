@@ -10,10 +10,8 @@ export function Sparkline({ data }: SparklineProps) {
     const latestStatus = data[data.length - 1]?.status;
     const statusColors = {
       healthy: '#00ff00',
-      warning: '#ffff00',
-      degraded: '#ff8800',
+      warning: '#ffaa00',
       critical: '#ff0000',
-      flatline: '#8b0000',
     };
     return statusColors[latestStatus] || '#00ff00';
   };

@@ -1,4 +1,4 @@
-import { Activity, Server, AlertCircle, Clock } from 'lucide-react';
+import { Activity, Server, Clock } from 'lucide-react';
 import { ServiceData, Alert } from '../types';
 
 interface SystemOverviewProps {
@@ -8,23 +8,18 @@ interface SystemOverviewProps {
 
 export function SystemOverview({ services, alerts }: SystemOverviewProps) {
   const totalServices = services.length;
-  const servicesUp = services.filter(s => s.status !== 'flatline').length;
+  const servicesUp = services.filter(s => s.httpStatus === 200).length;
   const servicesDown = totalServices - servicesUp;
   
   const avgResponseTime = Math.round(
     services
-      .filter(s => s.responseTime > 0)
+      .filter(s => s.httpStatus === 200 && s.responseTime > 0)
       .reduce((sum, s) => sum + s.responseTime, 0) / 
-    services.filter(s => s.responseTime > 0).length || 0
+    services.filter(s => s.httpStatus === 200 && s.responseTime > 0).length || 0
   );
 
   const overallHealth = Math.round((servicesUp / totalServices) * 100);
   
-  const recentAlerts = alerts.filter(a => {
-    const hourAgo = Date.now() - 24 * 60 * 60 * 1000;
-    return a.timestamp.getTime() > hourAgo;
-  }).length;
-
   const stats = [
     {
       label: 'Services Monitored',
@@ -54,17 +49,10 @@ export function SystemOverview({ services, alerts }: SystemOverviewProps) {
       color: avgResponseTime < 300 ? 'text-green-400' : avgResponseTime < 600 ? 'text-yellow-400' : 'text-orange-400',
       bgColor: avgResponseTime < 300 ? 'bg-green-500/10' : avgResponseTime < 600 ? 'bg-yellow-500/10' : 'bg-orange-500/10',
     },
-    {
-      label: 'Alerts (24h)',
-      value: recentAlerts,
-      icon: AlertCircle,
-      color: recentAlerts === 0 ? 'text-green-400' : recentAlerts < 5 ? 'text-yellow-400' : 'text-red-400',
-      bgColor: recentAlerts === 0 ? 'bg-green-500/10' : recentAlerts < 5 ? 'bg-yellow-500/10' : 'bg-red-500/10',
-    },
   ];
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
       {stats.map((stat, index) => (
         <div
           key={index}

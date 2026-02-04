@@ -12,7 +12,7 @@ services:
       - "3001:3001"  # WebSocket
     volumes:
       - ./data/logs:/app/data/logs  # Persist logs
-      - ./config:/app/config:ro     # Mount config as read-only
+      - ./config:/app/config        # Mount config directory
     environment:
       - NODE_ENV=production
       - PORT=3000

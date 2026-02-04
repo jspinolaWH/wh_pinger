@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
-import { Save, Plus, Trash2, Settings2, Clock, Activity, Bell, Database, Wifi, Palette, ArrowLeft } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Save, Plus, Trash2, Settings2, Clock, Activity, Bell, Database, Palette, ArrowLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import toast, { Toaster } from 'react-hot-toast';
 
 interface ServiceConfig {
   name: string;
@@ -19,7 +20,7 @@ interface ServiceConfig {
 interface ThresholdConfig {
   healthy: number;
   warning: number;
-  degraded: number;
+  critical: number;
 }
 
 interface Configuration {
@@ -29,7 +30,7 @@ interface Configuration {
     standard: number;
     low: number;
   };
-  flatlineDetection: {
+  criticalFailures: {
     critical: number;
     standard: number;
     low: number;
@@ -52,16 +53,16 @@ interface Configuration {
 export function ConfigPage() {
   const [config, setConfig] = useState<Configuration>({
     thresholds: {
-      healthy: 200,
-      warning: 500,
-      degraded: 1000,
+      healthy: 750,
+      warning: 1500,
+      critical: 1500,
     },
     heartbeatIntervals: {
       critical: 2,
       standard: 5,
       low: 5,
     },
-    flatlineDetection: {
+    criticalFailures: {
       critical: 2,
       standard: 3,
       low: 5,
@@ -90,6 +91,10 @@ export function ConfigPage() {
     showChart: true,
   });
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const previousConfigRef = useRef<{
+    heartbeatIntervals: typeof config.heartbeatIntervals;
+    services: ServiceConfig[];
+  } | null>(null);
 
   useEffect(() => {
     loadConfiguration();
@@ -97,8 +102,14 @@ export function ConfigPage() {
 
   const loadConfiguration = async () => {
     try {
+      // Load all configurations in parallel
+      const [servicesRes, thresholdsRes, audioRes] = await Promise.all([
+        fetch('/api/config/services'),
+        fetch('/api/config/thresholds'),
+        fetch('/api/config/audio')
+      ]);
+
       // Load services
-      const servicesRes = await fetch('/api/config/services');
       if (servicesRes.ok) {
         const data = await servicesRes.json();
         const loadedServices = data.services || [];
@@ -120,22 +131,33 @@ export function ConfigPage() {
       }
 
       // Load thresholds
-      const thresholdsRes = await fetch('/api/config/thresholds');
       if (thresholdsRes.ok) {
         const data = await thresholdsRes.json();
         // Transform API response to expected format
         const transformedThresholds = {
           healthy: data.default.healthy.max,
           warning: data.default.warning.max,
-          degraded: data.default.degraded.max,
+          critical: data.default.critical.min,
         };
         setConfig(prev => ({
           ...prev,
           thresholds: transformedThresholds,
-          flatlineDetection: {
-            critical: data.tiers.critical.flatline.consecutiveFailures,
-            standard: data.tiers.standard.flatline.consecutiveFailures,
-            low: data.tiers.low.flatline.consecutiveFailures,
+          criticalFailures: {
+            critical: data.tiers.critical.critical.consecutiveFailures,
+            standard: data.tiers.standard.critical.consecutiveFailures,
+            low: data.tiers.low.critical.consecutiveFailures,
+          },
+        }));
+      }
+
+      // Load audio configuration
+      if (audioRes.ok) {
+        const data = await audioRes.json();
+        setConfig(prev => ({
+          ...prev,
+          audio: {
+            enabled: data.enabled,
+            volume: data.volume,
           },
         }));
       }
@@ -144,32 +166,137 @@ export function ConfigPage() {
     }
   };
 
-  const handleSaveConfig = async () => {
-    setSaveStatus('saving');
+  const revertIntervalChanges = async () => {
+    if (!previousConfigRef.current) return;
+    
     try {
-      // Save thresholds
-      const thresholdsRes = await fetch('/api/config/thresholds', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config.thresholds),
-      });
-
-      // Save services
+      // Revert to previous intervals
+      const revertedServices = previousConfigRef.current.services.map(service => ({
+        ...service,
+        heartbeatInterval: previousConfigRef.current!.heartbeatIntervals[service.tier]
+      }));
+      
       const servicesRes = await fetch('/api/config/services', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ services }),
+        body: JSON.stringify({ services: revertedServices }),
       });
+      
+      if (servicesRes.ok) {
+        // Restore UI state
+        setConfig(prev => ({
+          ...prev,
+          heartbeatIntervals: previousConfigRef.current!.heartbeatIntervals
+        }));
+        setServices(previousConfigRef.current.services);
+        toast.success('Changes reverted successfully!');
+        previousConfigRef.current = null;
+      } else {
+        toast.error('Failed to revert changes');
+      }
+    } catch (error) {
+      console.error('Failed to revert changes:', error);
+      toast.error('Failed to revert changes');
+    }
+  };
 
-      if (thresholdsRes.ok && servicesRes.ok) {
+  const handleSaveConfig = async () => {
+    setSaveStatus('saving');
+    try {
+      // Store previous state before saving
+      previousConfigRef.current = {
+        heartbeatIntervals: {
+          critical: services.find(s => s.tier === 'critical')?.heartbeatInterval || 2,
+          standard: services.find(s => s.tier === 'standard')?.heartbeatInterval || 5,
+          low: services.find(s => s.tier === 'low')?.heartbeatInterval || 5,
+        },
+        services: [...services]
+      };
+
+      // Update services with new heartbeat intervals based on their tier
+      const updatedServices = services.map(service => ({
+        ...service,
+        heartbeatInterval: config.heartbeatIntervals[service.tier]
+      }));
+
+      // Save all configurations in parallel
+      const [thresholdsRes, servicesRes, audioRes] = await Promise.all([
+        fetch('/api/config/thresholds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config.thresholds),
+        }),
+        fetch('/api/config/services', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ services: updatedServices }),
+        }),
+        fetch('/api/config/audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config.audio),
+        })
+      ]);
+
+      if (thresholdsRes.ok && servicesRes.ok && audioRes.ok) {
         setSaveStatus('saved');
+        
+        // Check if intervals were changed (requires restart)
+        const intervalsChanged = 
+          previousConfigRef.current.heartbeatIntervals.critical !== config.heartbeatIntervals.critical ||
+          previousConfigRef.current.heartbeatIntervals.standard !== config.heartbeatIntervals.standard ||
+          previousConfigRef.current.heartbeatIntervals.low !== config.heartbeatIntervals.low;
+        
+        if (intervalsChanged) {
+          // Show toast with restart prompt
+          toast((t) => (
+            <div className="flex flex-col gap-3">
+              <div>
+                <div className="font-semibold text-sm mb-1">⚠️ Restart Required</div>
+                <div className="text-sm text-gray-600">
+                  Heartbeat intervals changed. Restart the backend server to apply changes.
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    toast.success('Please restart the backend server manually');
+                  }}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm font-medium hover:bg-blue-700"
+                >
+                  OK, I'll Restart
+                </button>
+                <button
+                  onClick={() => {
+                    toast.dismiss(t.id);
+                    revertIntervalChanges();
+                  }}
+                  className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded text-sm font-medium hover:bg-gray-300"
+                >
+                  Revert Changes
+                </button>
+              </div>
+            </div>
+          ), {
+            duration: Infinity,
+            style: {
+              maxWidth: '500px',
+            }
+          });
+        } else {
+          toast.success('Configuration saved successfully!');
+        }
+        
         setTimeout(() => setSaveStatus('idle'), 2000);
       } else {
         setSaveStatus('error');
+        toast.error('Failed to save configuration');
       }
     } catch (error) {
       console.error('Failed to save configuration:', error);
       setSaveStatus('error');
+      toast.error('Failed to save configuration');
     }
   };
 
@@ -208,6 +335,7 @@ export function ConfigPage() {
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white">
+      <Toaster position="top-right" />
       {/* Header */}
       <div className="border-b border-white/10 bg-black/40 backdrop-blur-sm sticky top-0 z-10">
         <div className="max-w-[1600px] mx-auto px-6 py-4 flex items-center justify-between">
@@ -242,6 +370,219 @@ export function ConfigPage() {
       <div className="max-w-[1600px] mx-auto px-6 py-6">
         <div className="space-y-8">
           
+          {/* Four Column Layout for Settings - All in one row */}
+          <div className="flex flex-row gap-6 overflow-x-auto">
+            
+            {/* Heartbeat Intervals */}
+            <section className="bg-white/5 border border-white/10 rounded-xl p-4 flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
+                <Clock className="w-4 h-4 text-orange-400" />
+                <h2 className="text-base font-semibold">Heartbeat Intervals</h2>
+              </div>
+              <div className="space-y-3">
+                {Object.entries(config.heartbeatIntervals).map(([tier, value]) => (
+                  <div key={tier} className="flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-medium capitalize">{tier} Tier</div>
+                      <div className="text-xs text-white/40">
+                        {tier === 'critical' && 'Production systems'}
+                        {tier === 'standard' && 'Regular services'}
+                        {tier === 'low' && 'Low priority'}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        value={value}
+                        onChange={(e) => setConfig({
+                          ...config,
+                          heartbeatIntervals: { ...config.heartbeatIntervals, [tier]: parseInt(e.target.value) }
+                        })}
+                        className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                      />
+                      <span className="text-xs text-white/60 w-6">s</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* Response Time Thresholds */}
+            <section className="bg-white/5 border border-white/10 rounded-xl p-4 flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
+                <Activity className="w-4 h-4 text-green-400" />
+                <h2 className="text-base font-semibold">Response Thresholds</h2>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-500"></div>
+                    <span className="text-sm font-medium">Healthy</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={config.thresholds.healthy}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        thresholds: { ...config.thresholds, healthy: parseInt(e.target.value) }
+                      })}
+                      className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                    />
+                    <span className="text-xs text-white/60 w-8">ms</span>
+                  </div>
+                </div>
+                <div className="text-xs text-white/40 ml-4">≤ {config.thresholds.healthy}ms</div>
+                
+                <div className="flex items-center justify-between pt-1.5 border-t border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-orange-500"></div>
+                    <span className="text-sm font-medium">Warning</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={config.thresholds.warning}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        thresholds: { ...config.thresholds, warning: parseInt(e.target.value) }
+                      })}
+                      className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                    />
+                    <span className="text-xs text-white/60 w-8">ms</span>
+                  </div>
+                </div>
+                <div className="text-xs text-white/40 ml-4">{config.thresholds.healthy}ms - {config.thresholds.warning}ms (sustained)</div>
+                
+                <div className="flex items-center justify-between pt-1.5 border-t border-white/10">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                    <span className="text-sm font-medium">Critical</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={config.thresholds.critical}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        thresholds: { ...config.thresholds, critical: parseInt(e.target.value) }
+                      })}
+                      className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                    />
+                    <span className="text-xs text-white/60 w-8">ms</span>
+                  </div>
+                </div>
+                <div className="text-xs text-white/40 ml-4">&gt; {config.thresholds.critical}ms or failures</div>
+              </div>
+            </section>
+
+            {/* Audio Alerts */}
+            <section className="bg-white/5 border border-white/10 rounded-xl p-4 flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
+                <Bell className="w-4 h-4 text-purple-400" />
+                <h2 className="text-base font-semibold">Audio Alerts</h2>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Enable Audio</span>
+                  <button
+                    onClick={() => setConfig({
+                      ...config,
+                      audio: { ...config.audio, enabled: !config.audio.enabled }
+                    })}
+                    className={`
+                      relative w-14 h-7 rounded-full transition-colors
+                      ${config.audio.enabled ? 'bg-green-600' : 'bg-white/20'}
+                    `}
+                  >
+                    <div
+                      className={`
+                        absolute top-1 w-5 h-5 rounded-full bg-white transition-transform
+                        ${config.audio.enabled ? 'translate-x-7' : 'translate-x-1'}
+                      `}
+                    />
+                  </button>
+                </div>
+                {config.audio.enabled && (
+                  <div>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <span className="text-xs text-white/60">Volume</span>
+                      <span className="text-xs font-mono">{config.audio.volume}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={config.audio.volume}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        audio: { ...config.audio, volume: parseInt(e.target.value) }
+                      })}
+                      className="w-full h-1.5 rounded-lg appearance-none bg-white/10 slider"
+                    />
+                  </div>
+                )}
+              </div>
+            </section>
+
+            {/* Data Retention */}
+            <section className="bg-white/5 border border-white/10 rounded-xl p-4 flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-3 pb-2 border-b border-white/10">
+                <Database className="w-4 h-4 text-cyan-400" />
+                <h2 className="text-base font-semibold">Data Retention</h2>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">History Points</span>
+                  <input
+                    type="number"
+                    value={config.dataRetention.historyPoints}
+                    onChange={(e) => setConfig({
+                      ...config,
+                      dataRetention: { ...config.dataRetention, historyPoints: parseInt(e.target.value) }
+                    })}
+                    className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Log Retention</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={config.dataRetention.logRetentionDays}
+                      onChange={(e) => setConfig({
+                        ...config,
+                        dataRetention: { ...config.dataRetention, logRetentionDays: parseInt(e.target.value) }
+                      })}
+                      className="w-20 px-2 py-1.5 text-sm rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
+                    />
+                    <span className="text-xs text-white/60">days</span>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium">Auto Cleanup</span>
+                  <button
+                    onClick={() => setConfig({
+                      ...config,
+                      dataRetention: { ...config.dataRetention, autoCleanup: !config.dataRetention.autoCleanup }
+                    })}
+                    className={`
+                      relative w-14 h-7 rounded-full transition-colors
+                      ${config.dataRetention.autoCleanup ? 'bg-green-600' : 'bg-white/20'}
+                    `}
+                  >
+                    <div
+                      className={`
+                        absolute top-1 w-5 h-5 rounded-full bg-white transition-transform
+                        ${config.dataRetention.autoCleanup ? 'translate-x-7' : 'translate-x-1'}
+                      `}
+                    />
+                  </button>
+                </div>
+              </div>
+            </section>
+          </div>
+
           {/* Services Management */}
           <section className="bg-white/5 border border-white/10 rounded-xl p-6">
             <div className="flex items-center gap-2 mb-6 pb-4 border-b border-white/10">
@@ -353,263 +694,6 @@ export function ConfigPage() {
               ))}
             </div>
           </section>
-
-          {/* Two Column Layout for Settings */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* Left Column */}
-            <div className="space-y-6">
-              
-              {/* Heartbeat Intervals */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <Clock className="w-5 h-5 text-orange-400" />
-                  <h2 className="text-lg font-semibold">Heartbeat Intervals</h2>
-                </div>
-                <div className="space-y-4">
-                  {Object.entries(config.heartbeatIntervals).map(([tier, value]) => (
-                    <div key={tier} className="flex items-center justify-between">
-                      <div>
-                        <div className="font-medium capitalize">{tier} Tier</div>
-                        <div className="text-xs text-white/40">
-                          {tier === 'critical' && 'Production systems'}
-                          {tier === 'standard' && 'Regular services'}
-                          {tier === 'low' && 'Low priority'}
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          value={value}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            heartbeatIntervals: { ...config.heartbeatIntervals, [tier]: parseInt(e.target.value) }
-                          })}
-                          className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                        />
-                        <span className="text-sm text-white/60 w-6">s</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-
-              {/* Response Time Thresholds */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <Activity className="w-5 h-5 text-green-400" />
-                  <h2 className="text-lg font-semibold">Response Thresholds</h2>
-                </div>
-                <div className="space-y-4">
-                  {Object.entries(config.thresholds).map(([level, value]) => (
-                    <div key={level} className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className={`w-3 h-3 rounded-full ${
-                          level === 'healthy' ? 'bg-green-500' :
-                          level === 'warning' ? 'bg-yellow-500' :
-                          'bg-orange-500'
-                        }`}></div>
-                        <span className="font-medium capitalize">{level}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          value={value}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            thresholds: { ...config.thresholds, [level]: parseInt(e.target.value) }
-                          })}
-                          className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                        />
-                        <span className="text-sm text-white/60 w-8">ms</span>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="flex items-center justify-between pt-2 border-t border-white/10">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                      <span className="font-medium">Critical</span>
-                    </div>
-                    <div className="text-sm text-white/60">&gt; {config.thresholds.degraded}ms</div>
-                  </div>
-                </div>
-              </section>
-
-              {/* Flatline Detection */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <span className="text-lg">⚠️</span>
-                  <h2 className="text-lg font-semibold">Flatline Detection</h2>
-                </div>
-                <div className="space-y-4">
-                  {Object.entries(config.flatlineDetection).map(([tier, value]) => (
-                    <div key={tier} className="flex items-center justify-between">
-                      <div>
-                        <div className="font-medium capitalize">{tier} Tier</div>
-                        <div className="text-xs text-white/40">Consecutive failures</div>
-                      </div>
-                      <input
-                        type="number"
-                        value={value}
-                        onChange={(e) => setConfig({
-                          ...config,
-                          flatlineDetection: { ...config.flatlineDetection, [tier]: parseInt(e.target.value) }
-                        })}
-                        className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            {/* Right Column */}
-            <div className="space-y-6">
-              
-              {/* Audio Alerts */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <Bell className="w-5 h-5 text-purple-400" />
-                  <h2 className="text-lg font-semibold">Audio Alerts</h2>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Enable Audio</span>
-                    <button
-                      onClick={() => setConfig({
-                        ...config,
-                        audio: { ...config.audio, enabled: !config.audio.enabled }
-                      })}
-                      className={`
-                        relative w-14 h-7 rounded-full transition-colors
-                        ${config.audio.enabled ? 'bg-green-600' : 'bg-white/20'}
-                      `}
-                    >
-                      <div
-                        className={`
-                          absolute top-1 w-5 h-5 rounded-full bg-white transition-transform
-                          ${config.audio.enabled ? 'translate-x-7' : 'translate-x-1'}
-                        `}
-                      />
-                    </button>
-                  </div>
-                  {config.audio.enabled && (
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm text-white/60">Volume</span>
-                        <span className="text-sm font-mono">{config.audio.volume}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        value={config.audio.volume}
-                        onChange={(e) => setConfig({
-                          ...config,
-                          audio: { ...config.audio, volume: parseInt(e.target.value) }
-                        })}
-                        className="w-full h-2 rounded-lg appearance-none bg-white/10 slider"
-                      />
-                    </div>
-                  )}
-                </div>
-              </section>
-
-              {/* Data Retention */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <Database className="w-5 h-5 text-cyan-400" />
-                  <h2 className="text-lg font-semibold">Data Retention</h2>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">History Points</span>
-                    <input
-                      type="number"
-                      value={config.dataRetention.historyPoints}
-                      onChange={(e) => setConfig({
-                        ...config,
-                        dataRetention: { ...config.dataRetention, historyPoints: parseInt(e.target.value) }
-                      })}
-                      className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Log Retention</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={config.dataRetention.logRetentionDays}
-                        onChange={(e) => setConfig({
-                          ...config,
-                          dataRetention: { ...config.dataRetention, logRetentionDays: parseInt(e.target.value) }
-                        })}
-                        className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                      />
-                      <span className="text-sm text-white/60">days</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Auto Cleanup</span>
-                    <button
-                      onClick={() => setConfig({
-                        ...config,
-                        dataRetention: { ...config.dataRetention, autoCleanup: !config.dataRetention.autoCleanup }
-                      })}
-                      className={`
-                        relative w-14 h-7 rounded-full transition-colors
-                        ${config.dataRetention.autoCleanup ? 'bg-green-600' : 'bg-white/20'}
-                      `}
-                    >
-                      <div
-                        className={`
-                          absolute top-1 w-5 h-5 rounded-full bg-white transition-transform
-                          ${config.dataRetention.autoCleanup ? 'translate-x-7' : 'translate-x-1'}
-                        `}
-                      />
-                    </button>
-                  </div>
-                </div>
-              </section>
-
-              {/* WebSocket Configuration */}
-              <section className="bg-white/5 border border-white/10 rounded-xl p-6">
-                <div className="flex items-center gap-2 mb-4 pb-3 border-b border-white/10">
-                  <Wifi className="w-5 h-5 text-blue-400" />
-                  <h2 className="text-lg font-semibold">WebSocket</h2>
-                </div>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Port</span>
-                    <input
-                      type="number"
-                      value={config.websocket.port}
-                      onChange={(e) => setConfig({
-                        ...config,
-                        websocket: { ...config.websocket, port: parseInt(e.target.value) }
-                      })}
-                      className="w-24 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Reconnect Timeout</span>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        value={config.websocket.reconnectTimeout}
-                        onChange={(e) => setConfig({
-                          ...config,
-                          websocket: { ...config.websocket, reconnectTimeout: parseInt(e.target.value) }
-                        })}
-                        className="w-20 px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500 focus:outline-none transition-colors text-right"
-                      />
-                      <span className="text-sm text-white/60">ms</span>
-                    </div>
-                  </div>
-                </div>
-              </section>
-            </div>
-          </div>
         </div>
       </div>
     </div>

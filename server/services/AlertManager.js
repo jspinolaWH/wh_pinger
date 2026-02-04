@@ -12,38 +12,7 @@ export class AlertManager {
     this.audioEnabled = config.alerts?.audio ?? true;
 
     // Subscribe to critical events
-    eventBus.on('flatline_detected', this.handleFlatline.bind(this));
     eventBus.on('pulse_changed', this.handlePulseChange.bind(this));
-    eventBus.on('service_recovered', this.handleRecovery.bind(this));
-  }
-
-  /**
-   * Handle flatline event
-   * @param {Object} event - Flatline event
-   */
-  handleFlatline(event) {
-    if (this.mutedServices.has(event.service)) {
-      return;
-    }
-
-    const alert = {
-      type: 'flatline',
-      service: event.service,
-      message: `⚠️ ${event.service} has flatlined! ${event.consecutiveFailures} consecutive failures.`,
-      severity: event.severity,
-      timestamp: event.timestamp
-    };
-
-    this.triggerAlert(alert);
-    this.logAlert(alert);
-
-    // Play sound (placeholder - requires platform-specific implementation)
-    if (this.audioEnabled) {
-      this.playSound('flatline', {
-        urgency: event.severity,
-        repeat: event.severity === 'catastrophic' ? 3 : 1
-      });
-    }
   }
 
   /**
@@ -72,28 +41,23 @@ export class AlertManager {
         this.playSound('warning');
       }
     }
-  }
 
-  /**
-   * Handle recovery event
-   * @param {Object} event - Recovery event
-   */
-  handleRecovery(event) {
-    const downtimeMinutes = Math.round(event.downtime / 1000 / 60);
-    
-    const alert = {
-      type: 'recovery',
-      service: event.service,
-      message: `✅ ${event.service} has recovered! Downtime: ${downtimeMinutes} minutes`,
-      severity: 'info',
-      timestamp: event.timestamp
-    };
+    // Alert on recovery to healthy
+    if (event.newStatus === 'healthy' && event.oldStatus !== 'healthy') {
+      const alert = {
+        type: 'recovery',
+        service: event.service,
+        message: `✅ ${event.service} has recovered to healthy status`,
+        severity: 'info',
+        timestamp: event.timestamp
+      };
 
-    this.triggerAlert(alert);
-    this.logAlert(alert);
+      this.triggerAlert(alert);
+      this.logAlert(alert);
 
-    if (this.audioEnabled) {
-      this.playSound('recovery');
+      if (this.audioEnabled) {
+        this.playSound('recovery');
+      }
     }
   }
 
@@ -149,9 +113,7 @@ export class AlertManager {
     const statusHierarchy = {
       'healthy': 0,
       'warning': 1,
-      'degraded': 2,
-      'critical': 3,
-      'flatline': 4
+      'critical': 2
     };
 
     return statusHierarchy[newStatus] > statusHierarchy[oldStatus];
@@ -165,10 +127,8 @@ export class AlertManager {
   getSeverityForStatus(status) {
     const severityMap = {
       'healthy': 'info',
-      'warning': 'low',
-      'degraded': 'medium',
-      'critical': 'high',
-      'flatline': 'critical'
+      'warning': 'medium',
+      'critical': 'high'
     };
 
     return severityMap[status] || 'info';

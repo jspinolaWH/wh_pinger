@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 // Core components
 import { EventBus } from './core/EventBus.js';
 import { HeartbeatEngine } from './core/HeartbeatEngine.js';
-import { FlatlineDetector } from './core/FlatlineDetector.js';
+import { StateManager } from './core/StateManager.js';
 
 // Strategies
 import { BasicGraphQLStrategy } from './strategies/BasicGraphQLStrategy.js';
@@ -77,14 +77,15 @@ class HeartbeatMonitorServer {
       );
       console.log('   ✓ Heartbeat engine ready\n');
 
-      // Initialize flatline detector
-      console.log('📡 Initializing flatline detector...');
-      const flatlineDetector = new FlatlineDetector(
+      // Initialize state manager
+      console.log('📡 Initializing state manager...');
+      const stateManager = new StateManager(
         this.eventBus,
-        configs.thresholds
+        configs.thresholds,
+        configs.services
       );
-      this.flatlineDetector = flatlineDetector;
-      console.log('   ✓ Flatline detector active\n');
+      this.stateManager = stateManager;
+      console.log('   ✓ State manager active\n');
 
       // Initialize data logger
       console.log('📊 Initializing data logger...');
@@ -117,23 +118,24 @@ class HeartbeatMonitorServer {
       });
 
       // Set up REST API routes
-      this.setupRoutes(flatlineDetector, dataLogger, alertManager);
+      this.setupRoutes(stateManager, dataLogger, alertManager);
 
       // Start Express server
       const port = configs.config.server.port;
-      this.server = this.app.listen(port, () => {
+      this.server = this.app.listen(port, '0.0.0.0', () => {
         console.log(`🌐 HTTP server listening on port ${port}`);
       });
 
       // Start WebSocket server
       const wsPort = configs.config.server.websocketPort;
-      this.wsServer = new WebSocketServer({ port: wsPort });
+      this.wsServer = new WebSocketServer({ port: wsPort, host: '0.0.0.0' });
       console.log(`🔌 WebSocket server listening on port ${wsPort}\n`);
 
       // Initialize WebSocket broadcaster
       const wsBroadcaster = new WebSocketBroadcaster(
         this.eventBus,
-        this.wsServer
+        this.wsServer,
+        stateManager
       );
       this.wsBroadcaster = wsBroadcaster;
 
@@ -155,7 +157,9 @@ class HeartbeatMonitorServer {
       console.log('═══════════════════════════════════════════════');
       console.log(`📊 Monitoring ${configs.services.length} services`);
       console.log(`🌐 API available at: http://localhost:${port}`);
+      console.log(`📱 Network API: http://192.168.1.7:${port}`);
       console.log(`🔌 WebSocket available at: ws://localhost:${wsPort}`);
+      console.log(`📱 Network WS: ws://192.168.1.7:${wsPort}`);
       console.log('═══════════════════════════════════════════════\n');
 
     } catch (error) {
@@ -167,7 +171,7 @@ class HeartbeatMonitorServer {
   /**
    * Set up REST API routes
    */
-  setupRoutes(flatlineDetector, dataLogger, alertManager) {
+  setupRoutes(stateManager, dataLogger, alertManager) {
     // Health check
     this.app.get('/api/health', (req, res) => {
       res.json({
@@ -180,19 +184,17 @@ class HeartbeatMonitorServer {
     // Get all services status
     this.app.get('/api/services', (req, res) => {
       const services = this.config.services.map(service => {
-        const state = flatlineDetector.getServiceState(service.name);
+        const state = stateManager.getServiceState(service.name);
         return {
           name: service.name,
           url: service.url,
           tier: service.tier,
           heartbeatInterval: service.heartbeatInterval,
-          status: state.lastPulseStatus || 'unknown',
+          status: state.currentStatus || 'unknown',
           lastCheck: state.lastCheck,
           lastSuccess: state.lastSuccess,
           consecutiveFailures: state.consecutiveFailures,
-          isFlatlined: state.isFlatlined,
-          uptime: flatlineDetector.getUptime(service.name),
-          httpStatus: state.lastHttpStatus
+          uptime: stateManager.getUptime(service.name)
         };
       });
 
@@ -208,18 +210,17 @@ class HeartbeatMonitorServer {
         return res.status(404).json({ error: 'Service not found' });
       }
 
-      const state = flatlineDetector.getServiceState(serviceName);
+      const state = stateManager.getServiceState(serviceName);
       const summary = await dataLogger.getSummary(serviceName);
 
       res.json({
         name: service.name,
         url: service.url,
         tier: service.tier,
-        currentStatus: state.lastPulseStatus || 'unknown',
+        currentStatus: state.currentStatus || 'unknown',
         lastCheck: state.lastCheck,
         lastSuccess: state.lastSuccess,
         consecutiveFailures: state.consecutiveFailures,
-        isFlatlined: state.isFlatlined,
         checks: service.checks,
         stats: summary
       });
@@ -320,7 +321,9 @@ class HeartbeatMonitorServer {
         // Write to services.json
         const fs = await import('fs/promises');
         const path = await import('path');
-        const __dirname = path.dirname(new URL(import.meta.url).pathname);
+        const { fileURLToPath } = await import('url');
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
         const configPath = path.join(__dirname, '../config/services.json');
         
         await fs.writeFile(
@@ -344,10 +347,10 @@ class HeartbeatMonitorServer {
     // Update thresholds configuration
     this.app.post('/api/config/thresholds', async (req, res) => {
       try {
-        const { healthy, warning, degraded } = req.body;
+        const { healthy, warning, critical } = req.body;
         
         // Validate thresholds
-        if (typeof healthy !== 'number' || typeof warning !== 'number' || typeof degraded !== 'number') {
+        if (typeof healthy !== 'number' || typeof warning !== 'number' || typeof critical !== 'number') {
           return res.status(400).json({ error: 'Invalid threshold values' });
         }
 
@@ -355,14 +358,14 @@ class HeartbeatMonitorServer {
         this.config.thresholds.default.healthy.max = healthy;
         this.config.thresholds.default.warning.min = healthy;
         this.config.thresholds.default.warning.max = warning;
-        this.config.thresholds.default.degraded.min = warning;
-        this.config.thresholds.default.degraded.max = degraded;
-        this.config.thresholds.default.critical.min = degraded;
+        this.config.thresholds.default.critical.min = critical;
 
         // Write to thresholds.json
         const fs = await import('fs/promises');
         const path = await import('path');
-        const __dirname = path.dirname(new URL(import.meta.url).pathname);
+        const { fileURLToPath } = await import('url');
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
         const configPath = path.join(__dirname, '../config/thresholds.json');
         
         await fs.writeFile(
@@ -374,6 +377,64 @@ class HeartbeatMonitorServer {
         res.json({ success: true, message: 'Thresholds updated successfully' });
       } catch (error) {
         console.error('Error updating thresholds config:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Get audio configuration
+    this.app.get('/api/config/audio', (req, res) => {
+      const audioConfig = this.config.config?.alerts || { audio: true, volume: 0.7 };
+      res.json({
+        enabled: audioConfig.audio,
+        volume: Math.round(audioConfig.volume * 100)
+      });
+    });
+
+    // Update audio configuration
+    this.app.post('/api/config/audio', async (req, res) => {
+      try {
+        const { enabled, volume } = req.body;
+        
+        // Validate audio configuration
+        if (typeof enabled !== 'boolean') {
+          return res.status(400).json({ error: 'Invalid enabled value (must be boolean)' });
+        }
+        if (typeof volume !== 'number' || volume < 0 || volume > 100) {
+          return res.status(400).json({ error: 'Invalid volume value (must be 0-100)' });
+        }
+
+        // Update in-memory config
+        if (!this.config.config) this.config.config = {};
+        if (!this.config.config.alerts) this.config.config.alerts = {};
+        this.config.config.alerts.audio = enabled;
+        this.config.config.alerts.volume = volume / 100;
+
+        // Write to config.json
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const { fileURLToPath } = await import('url');
+        const __filename = fileURLToPath(import.meta.url);
+        const __dirname = path.dirname(__filename);
+        const configPath = path.join(__dirname, '../config/config.json');
+        
+        // Read current config to preserve other settings
+        const currentConfigData = await fs.readFile(configPath, 'utf8');
+        const currentConfig = JSON.parse(currentConfigData);
+        
+        // Update alerts section
+        if (!currentConfig.alerts) currentConfig.alerts = {};
+        currentConfig.alerts.audio = enabled;
+        currentConfig.alerts.volume = volume / 100;
+        
+        await fs.writeFile(
+          configPath,
+          JSON.stringify(currentConfig, null, 2),
+          'utf8'
+        );
+
+        res.json({ success: true, message: 'Audio configuration updated successfully' });
+      } catch (error) {
+        console.error('Error updating audio config:', error);
         res.status(500).json({ error: error.message });
       }
     });

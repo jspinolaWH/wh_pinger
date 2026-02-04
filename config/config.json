@@ -5,6 +5,7 @@
     "host": "0.0.0.0"
   },
   "monitoring": {
+    "logPath": "./data/logs",
     "historyRetention": 24,
     "logRotationInterval": "daily",
     "maxLogSize": 104857600,
