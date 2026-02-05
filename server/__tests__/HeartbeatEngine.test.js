@@ -13,8 +13,7 @@ describe('HeartbeatEngine', () => {
     thresholds = {
       default: {
         healthy: { max: 200 },
-        warning: { max: 500 },
-        degraded: { max: 1000 }
+        warning: { max: 500 }
       },
       tiers: {
         critical: { healthy: { max: 100 } }
@@ -26,6 +25,13 @@ describe('HeartbeatEngine', () => {
       }
     };
     engine = new HeartbeatEngine(eventBus, mockStrategies, thresholds);
+
+    // Suppress console.log during tests
+    jest.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   describe('evaluatePulse()', () => {
@@ -46,28 +52,21 @@ describe('HeartbeatEngine', () => {
       expect(pulse.status).toBe('warning');
     });
 
-    it('should return degraded for response 500-1000ms', () => {
+    it('should return critical for response > 500ms', () => {
       const response = { success: true, hasResponse: true };
 
       const pulse = engine.evaluatePulse(750, response);
 
-      expect(pulse.status).toBe('degraded');
-    });
-
-    it('should return critical for response > 1000ms', () => {
-      const response = { success: true, hasResponse: true };
-
-      const pulse = engine.evaluatePulse(1500, response);
-
       expect(pulse.status).toBe('critical');
     });
 
-    it('should return flatline for timeout/no response', () => {
+    it('should return critical for failed responses', () => {
       const response = { success: false, hasResponse: false };
 
       const pulse = engine.evaluatePulse(5000, response);
 
-      expect(pulse.status).toBe('flatline');
+      expect(pulse.status).toBe('critical');
+      expect(pulse.isFailure).toBe(true);
     });
 
     it('should return critical for HTTP errors with response', () => {
@@ -76,6 +75,7 @@ describe('HeartbeatEngine', () => {
       const pulse = engine.evaluatePulse(100, response);
 
       expect(pulse.status).toBe('critical');
+      expect(pulse.isFailure).toBe(true);
     });
   });
 
@@ -117,7 +117,7 @@ describe('HeartbeatEngine', () => {
       );
     });
 
-    it('should emit heartbeat_received on success', async () => {
+    it('should emit heartbeat_received on HTTP 200 success', async () => {
       const receivedHandler = jest.fn();
       eventBus.on('heartbeat_received', receivedHandler);
 
@@ -137,7 +137,7 @@ describe('HeartbeatEngine', () => {
       );
     });
 
-    it('should emit heartbeat_received for HTTP errors with response', async () => {
+    it('should emit heartbeat_failed for HTTP errors with response', async () => {
       const receivedHandler = jest.fn();
       const failedHandler = jest.fn();
       eventBus.on('heartbeat_received', receivedHandler);
@@ -151,8 +151,8 @@ describe('HeartbeatEngine', () => {
 
       await engine.sendHeartbeat(service, check);
 
-      expect(receivedHandler).toHaveBeenCalled();
-      expect(failedHandler).not.toHaveBeenCalled();
+      expect(failedHandler).toHaveBeenCalled();
+      expect(receivedHandler).not.toHaveBeenCalled();
     });
 
     it('should emit heartbeat_failed for network errors', async () => {
